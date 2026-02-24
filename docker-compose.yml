@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=False
+      - AZURE_SERVICE_BUS_CONNECTION_STRING=${AZURE_SERVICE_BUS_CONNECTION_STRING}
+      - COSMOS_DB_CONNECTION_STRING=${COSMOS_DB_CONNECTION_STRING}
+      - AZURE_STORAGE_ACCOUNT_NAME=${AZURE_STORAGE_ACCOUNT_NAME}
+      - AZURE_STORAGE_ACCOUNT_KEY=${AZURE_STORAGE_ACCOUNT_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    depends_on:
+      - azurite
+    networks:
+      - app-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://backend:8000/api/v1
+    depends_on:
+      - backend
+    networks:
+      - app-network
+
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    ports:
+      - "10000:10000"
+      - "10001:10001"
+      - "10002:10002"
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
