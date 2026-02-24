@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { paperAPI } from '../services/api';
 
 const statusColors = {
@@ -13,7 +13,7 @@ const PapersList = ({ userId, onViewPaper, onClose }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const fetchPapers = async () => {
+  const fetchPapers = useCallback(async () => {
     try {
       setLoading(true);
       setError('');
@@ -24,11 +24,11 @@ const PapersList = ({ userId, onViewPaper, onClose }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [userId]);
 
   useEffect(() => {
     fetchPapers();
-  }, [userId]);
+  }, [fetchPapers]);
 
   if (loading) {
     return (

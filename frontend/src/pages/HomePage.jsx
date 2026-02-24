@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import PaperGenerationForm from '../components/PaperGenerationForm';
 import PaperResults from '../components/PaperResults';
 import PapersList from '../components/PapersList';
