@@ -51,6 +51,14 @@ export const paperAPI = {
 
   getPaperContent: (paperId) =>
     apiClient.get(`/papers/${paperId}/content`),
+
+  downloadPaperWord: (paperId) =>
+    axios.get(`${API_BASE_URL}/papers/${paperId}/download`, {
+      responseType: 'blob',
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem('token') || ''}`,
+      },
+    }),
 };
 
 // User endpoints

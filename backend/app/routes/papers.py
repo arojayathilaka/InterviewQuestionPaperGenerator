@@ -1,6 +1,8 @@
 from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi.responses import StreamingResponse
 from typing import Optional
 import logging
+import io
 
 from app.models import PaperGenerationRequest, PaperGenerationResponse
 from app.services.orchestration import get_orchestration_service
@@ -214,6 +216,185 @@ async def get_paper_content(
         raise
     except Exception as e:
         logger.error(f"Error getting paper content: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error_code": "INTERNAL_ERROR", "message": str(e)}
+        )
+
+
+@router.get("/{paper_id}/download")
+async def download_paper_word(
+    paper_id: str,
+    cosmos_db_service=Depends(get_cosmos_db_service)
+):
+    """
+    Download a generated paper as a Word (.docx) document.
+    """
+    from app.services import get_blob_storage_service
+    from docx import Document
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    import json as json_mod
+
+    try:
+        # Fetch metadata
+        metadata = await cosmos_db_service.get_by_id(paper_id)
+        if not metadata:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error_code": "PAPER_NOT_FOUND", "message": f"Paper {paper_id} not found"}
+            )
+        paper_url = metadata.get("paper_url")
+        if not paper_url:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error_code": "PAPER_CONTENT_NOT_FOUND", "message": "Paper content not available yet"}
+            )
+
+        # Download blob content
+        from urllib.parse import urlparse
+        parsed_url = urlparse(paper_url)
+        path_parts = parsed_url.path.lstrip("/").split("/", 1)
+        blob_name = path_parts[1] if len(path_parts) > 1 else path_parts[0]
+        blob_storage = await get_blob_storage_service()
+        content = await blob_storage.download_paper(blob_name)
+
+        # Parse questions
+        questions = []
+        if content.get("questions"):
+            for q in content["questions"]:
+                if q.get("question_text") or q.get("question"):
+                    questions.append(q)
+                elif q.get("raw"):
+                    try:
+                        cleaned = q["raw"]
+                        if cleaned.startswith("```"):
+                            cleaned = cleaned.split("\n", 1)[-1] if "\n" in cleaned else cleaned[3:]
+                        if cleaned.endswith("```"):
+                            cleaned = cleaned[:-3]
+                        cleaned = cleaned.strip()
+                        parsed_q = json_mod.loads(cleaned)
+                        if isinstance(parsed_q, list):
+                            questions.extend(parsed_q)
+                        else:
+                            questions.append(parsed_q)
+                    except (json_mod.JSONDecodeError, Exception):
+                        pass
+
+        topic = content.get("topic", metadata.get("topic", "Interview Questions"))
+        duration = content.get("duration_minutes", metadata.get("duration_minutes", ""))
+
+        # Build Word document
+        doc = Document()
+
+        # Title
+        title_heading = doc.add_heading(f"Interview Questions: {topic}", level=0)
+        title_heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        # Metadata line
+        meta_para = doc.add_paragraph()
+        meta_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        if duration:
+            meta_run = meta_para.add_run(f"Duration: {duration} minutes  |  ")
+            meta_run.font.size = Pt(11)
+            meta_run.font.color.rgb = RGBColor(100, 100, 100)
+        count_run = meta_para.add_run(f"Total Questions: {len(questions)}")
+        count_run.font.size = Pt(11)
+        count_run.font.color.rgb = RGBColor(100, 100, 100)
+
+        doc.add_paragraph("")
+
+        # Difficulty distribution
+        diff_dist = content.get("difficulty_distribution", metadata.get("difficulty_distribution"))
+        if diff_dist:
+            dist_para = doc.add_paragraph()
+            dist_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            dist_run = dist_para.add_run("Difficulty Distribution: ")
+            dist_run.bold = True
+            dist_run.font.size = Pt(10)
+            parts = [f"{level.capitalize()}: {count}" for level, count in diff_dist.items()]
+            dist_detail = dist_para.add_run("  |  ".join(parts))
+            dist_detail.font.size = Pt(10)
+            dist_detail.font.color.rgb = RGBColor(100, 100, 100)
+
+        doc.add_paragraph("\u2500" * 60)
+
+        # Difficulty badge colors
+        difficulty_colors = {
+            "easy": RGBColor(34, 139, 34),
+            "medium": RGBColor(218, 165, 32),
+            "hard": RGBColor(220, 20, 60),
+        }
+
+        # Questions
+        for i, q in enumerate(questions, 1):
+            q_text = q.get("question_text") or q.get("question", "")
+            difficulty = (q.get("difficulty_level") or q.get("difficulty", "")).lower()
+
+            # Question text
+            q_para = doc.add_paragraph()
+            q_num = q_para.add_run(f"Q{i}. ")
+            q_num.bold = True
+            q_num.font.size = Pt(12)
+            q_body = q_para.add_run(q_text)
+            q_body.font.size = Pt(12)
+
+            # Difficulty badge
+            if difficulty:
+                badge = q_para.add_run(f"  [{difficulty.capitalize()}]")
+                badge.font.size = Pt(9)
+                badge.font.color.rgb = difficulty_colors.get(difficulty, RGBColor(100, 100, 100))
+                badge.bold = True
+
+            # Options
+            options = q.get("options", [])
+            if options:
+                for j, opt in enumerate(options):
+                    opt_para = doc.add_paragraph(style="List Bullet")
+                    opt_run = opt_para.add_run(f"{chr(97 + j)}) {opt}")
+                    opt_run.font.size = Pt(11)
+
+            # Answer
+            answer = q.get("correct_answer") or q.get("answer", "")
+            if answer:
+                ans_para = doc.add_paragraph()
+                ans_label = ans_para.add_run("Answer: ")
+                ans_label.bold = True
+                ans_label.font.size = Pt(11)
+                ans_label.font.color.rgb = RGBColor(0, 100, 0)
+                ans_value = ans_para.add_run(str(answer))
+                ans_value.font.size = Pt(11)
+
+            # Explanation
+            explanation = q.get("explanation", "")
+            if explanation:
+                exp_para = doc.add_paragraph()
+                exp_label = exp_para.add_run("Explanation: ")
+                exp_label.bold = True
+                exp_label.font.size = Pt(10)
+                exp_label.font.italic = True
+                exp_value = exp_para.add_run(explanation)
+                exp_value.font.size = Pt(10)
+                exp_value.font.color.rgb = RGBColor(80, 80, 80)
+
+            doc.add_paragraph("")
+
+        # Save to buffer and return
+        buffer = io.BytesIO()
+        doc.save(buffer)
+        buffer.seek(0)
+
+        filename = f"interview_questions_{topic.replace(' ', '_').lower()}.docx"
+        return StreamingResponse(
+            buffer,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating Word document: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error_code": "INTERNAL_ERROR", "message": str(e)}

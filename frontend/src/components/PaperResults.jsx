@@ -129,52 +129,14 @@ const PaperResults = ({ paperId, onClose }) => {
               className="inline-block bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-6 rounded-lg transition duration-200"
               onClick={async () => {
                 try {
-                  const data = await paperAPI.getPaperContent(paper.paper_id);
-                  // Build a text file from the formatted_content or questions
-                  let text = '';
-                  if (data.formatted_content?.formatted_paper) {
-                    text = data.formatted_content.formatted_paper;
-                  } else {
-                    text = `Interview Questions: ${data.topic || paper.topic}\n`;
-                    text += `Duration: ${data.duration_minutes || ''} minutes\n\n`;
-                    // Parse questions
-                    let questions = [];
-                    if (data.questions) {
-                      for (const q of data.questions) {
-                        if (q.question_text || q.question) {
-                          questions.push(q);
-                        } else if (q.raw) {
-                          try {
-                            const cleaned = q.raw.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
-                            const parsed = JSON.parse(cleaned);
-                            if (Array.isArray(parsed)) questions.push(...parsed);
-                            else questions.push(parsed);
-                          } catch (e) {}
-                        }
-                      }
-                    }
-                    questions.forEach((q, i) => {
-                      text += `Q${i + 1}. ${q.question_text || q.question}\n`;
-                      if (q.options) {
-                        q.options.forEach((opt, j) => {
-                          text += `   ${String.fromCharCode(97 + j)}) ${opt}\n`;
-                        });
-                      }
-                      if (q.correct_answer || q.answer) {
-                        text += `   Answer: ${q.correct_answer || q.answer}\n`;
-                      }
-                      if (q.explanation) {
-                        text += `   Explanation: ${q.explanation}\n`;
-                      }
-                      text += '\n';
-                    });
-                  }
-                  // Create and download text file
-                  const blob = new Blob([text], { type: 'text/plain' });
+                  const response = await paperAPI.downloadPaperWord(paper.paper_id);
+                  const blob = new Blob([response.data], {
+                    type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                  });
                   const url = URL.createObjectURL(blob);
                   const a = document.createElement('a');
                   a.href = url;
-                  a.download = `${paper.paper_id}.txt`;
+                  a.download = `interview_questions_${(paper.topic || 'paper').replace(/\s+/g, '_').toLowerCase()}.docx`;
                   document.body.appendChild(a);
                   a.click();
                   document.body.removeChild(a);
@@ -184,7 +146,7 @@ const PaperResults = ({ paperId, onClose }) => {
                 }
               }}
             >
-              📥 Download Paper
+              📥 Download as Word
             </button>
             <button
               className="inline-block bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-6 rounded-lg transition duration-200"
