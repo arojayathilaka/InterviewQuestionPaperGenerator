@@ -267,17 +267,8 @@ class PaperOrchestrationService:
                 {"paper_id": paper_id}
             )
         finally:
-            # Guarantee status update to 'completed' if possible, and log errors
-            try:
-                if cosmos_db is None:
-                    cosmos_db = await get_cosmos_db_service()
-                await cosmos_db.update_item_field(
-                    item_id=paper_id,
-                    field_name="status",
-                    field_value="completed"
-                )
-            except Exception as final_update_err:
-                logger.error(f"[GUARANTEE] Failed to set status to 'completed' for {paper_id}: {final_update_err}")
+            # Log completion of the finally block — status is managed by the caller (worker.py)
+            logger.info(f"[{paper_id}] Orchestration execute_paper_generation finally block reached")
     
     def _calculate_difficulty_distribution(self, questions: List[dict]) -> dict:
         """Calculate difficulty distribution from questions"""

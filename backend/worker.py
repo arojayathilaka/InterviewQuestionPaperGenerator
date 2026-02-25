@@ -26,6 +26,14 @@ async def process_message(message, orchestration_service, cosmos_db_service):
     message_body = json.loads(str(message))
     try:
         logger.info(f"Processing paper generation: {paper_id}")
+
+        # Guard: skip if already completed or processing
+        existing = await cosmos_db_service.get_by_id(paper_id)
+        if existing and existing.get("status") in ["completed", "processing"]:
+            logger.warning(f"[{paper_id}] Already {existing['status']} — skipping duplicate message")
+            await message.complete()
+            return
+
         # Update status to "processing"
         await cosmos_db_service.update_item_field(
             item_id=paper_id,
@@ -69,19 +77,12 @@ async def process_message(message, orchestration_service, cosmos_db_service):
             logger.error(f"[{paper_id}] Failed to update status to failed: {update_err}")
         raise
     finally:
-        # Guarantee status update to 'completed' if not failed, and log errors
+        # Always complete the message to remove it from the queue
         try:
-            # Only set to completed if not already failed
-            item = await cosmos_db_service.get_by_id(paper_id)
-            if item and item.get("status") not in ["failed", "completed"]:
-                await cosmos_db_service.update_item_field(
-                    item_id=paper_id,
-                    field_name="status",
-                    field_value="completed"
-                )
-        except Exception as final_update_err:
-            logger.error(f"[GUARANTEE] Failed to set status to 'completed' for {paper_id}: {final_update_err}")
-        await message.complete()
+            await message.complete()
+            logger.info(f"[{paper_id}] Message completed and removed from queue")
+        except Exception as complete_err:
+            logger.error(f"[{paper_id}] Failed to complete message: {complete_err}")
 
 
 async def run_worker():
@@ -104,7 +105,8 @@ async def run_worker():
             try:
                 async with service_bus.client.get_queue_receiver(
                     settings.SERVICE_BUS_QUEUE_NAME,
-                    max_wait_time=30  # Wait max 30 seconds for a message
+                    max_wait_time=30,  # Wait max 30 seconds for a message
+                    max_lock_renewal_duration=600  # Auto-renew lock for up to 10 minutes
                 ) as receiver:
                     async for message in receiver:
                         await process_message(message, orchestration, cosmos_db)
