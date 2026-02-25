@@ -27,9 +27,9 @@ async def process_message(message, orchestration_service, cosmos_db_service):
     try:
         logger.info(f"Processing paper generation: {paper_id}")
 
-        # Guard: skip if already completed or processing
+        # Guard: skip if already completed, processing, or failed
         existing = await cosmos_db_service.get_by_id(paper_id)
-        if existing and existing.get("status") in ["completed", "processing"]:
+        if existing and existing.get("status") in ["completed", "processing", "failed"]:
             logger.warning(f"[{paper_id}] Already {existing['status']} — skipping duplicate message")
             await message.complete()
             return
@@ -54,17 +54,6 @@ async def process_message(message, orchestration_service, cosmos_db_service):
             logger.warning(f"[{paper_id}] Paper generation workflow returned False")
         logger.info(f"[{paper_id}] Message processed successfully - removing from queue")
         
-    except asyncio.TimeoutError as e:
-        logger.error(f"[{paper_id}] Timeout during processing: {e}")
-        try:
-            await cosmos_db_service.update_item_field(
-                item_id=paper_id,
-                field_name="status",
-                field_value="failed"
-            )
-        except Exception as update_err:
-            logger.error(f"[{paper_id}] Failed to update status to failed: {update_err}")
-        raise
     except Exception as e:
         logger.error(f"[{paper_id}] Failed to process message: {e}", exc_info=True)
         try:
@@ -75,7 +64,7 @@ async def process_message(message, orchestration_service, cosmos_db_service):
             )
         except Exception as update_err:
             logger.error(f"[{paper_id}] Failed to update status to failed: {update_err}")
-        raise
+        # Do NOT re-raise — we handle the error here and complete the message below
     finally:
         # Always complete the message to remove it from the queue
         try:

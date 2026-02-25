@@ -12,28 +12,42 @@ const PaperResults = ({ paperId, onClose }) => {
   useEffect(() => {
     if (!paperId) return;
 
+    let isCancelled = false;
+    let pollInterval = null;
+
     const fetchPaperStatus = async () => {
       try {
         const statusResponse = await paperAPI.getPaperStatus(paperId);
+        if (isCancelled) return;
         setStatus(statusResponse.status);
 
         if (statusResponse.status === 'completed') {
           const paperResponse = await paperAPI.getPaper(paperId);
-          setPaper(paperResponse);
+          if (!isCancelled) setPaper(paperResponse);
+          // Stop polling — we're done
+          if (pollInterval) clearInterval(pollInterval);
+        } else if (statusResponse.status === 'failed') {
+          // Stop polling — terminal state
+          if (pollInterval) clearInterval(pollInterval);
         }
-        setLoading(false);
+        if (!isCancelled) setLoading(false);
       } catch (err) {
-        setError(err.response?.data?.detail?.message || 'Failed to fetch paper');
-        setLoading(false);
+        if (!isCancelled) {
+          setError(err.response?.data?.detail?.message || 'Failed to fetch paper');
+          setLoading(false);
+        }
       }
     };
 
     fetchPaperStatus();
 
     // Poll for status every 5 seconds if not completed
-    const pollInterval = setInterval(fetchPaperStatus, 5000);
+    pollInterval = setInterval(fetchPaperStatus, 5000);
 
-    return () => clearInterval(pollInterval);
+    return () => {
+      isCancelled = true;
+      if (pollInterval) clearInterval(pollInterval);
+    };
   }, [paperId]);
 
   if (loading) {
