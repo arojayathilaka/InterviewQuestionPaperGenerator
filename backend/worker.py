@@ -6,6 +6,7 @@ Run this in a separate terminal/process alongside the FastAPI server
 import asyncio
 import json
 import logging
+from aiohttp import web
 from app.config import settings
 from app.services import get_service_bus_service, get_cosmos_db_service
 from app.services.orchestration import get_orchestration_service
@@ -125,9 +126,38 @@ async def run_worker():
         logger.info("Worker stopped")
 
 
-if __name__ == "__main__":
+async def health_handler(request):
+    """Simple health check endpoint for Azure App Service"""
+    return web.Response(text='{"status": "healthy", "service": "worker"}', content_type="application/json")
+
+
+async def start_health_server():
+    """Start a lightweight HTTP server for health checks"""
+    app = web.Application()
+    app.router.add_get("/health", health_handler)
+    app.router.add_get("/", health_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", os.environ.get("WEBSITES_PORT", "8000")))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.info(f"Health check server running on port {port}")
+    return runner
+
+
+async def main():
+    """Run health server and worker concurrently"""
+    runner = await start_health_server()
     try:
-        asyncio.run(run_worker())
+        await run_worker()
+    finally:
+        await runner.cleanup()
+
+
+if __name__ == "__main__":
+    import os
+    try:
+        asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Worker interrupted by user")
     except Exception as e:
