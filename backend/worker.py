@@ -24,6 +24,7 @@ async def process_message(message, orchestration_service, cosmos_db_service):
     """Process a single paper generation message"""
     paper_id = message.message_id
     message_body = json.loads(str(message))
+    message_completed = False
     try:
         logger.info(f"Processing paper generation: {paper_id}")
 
@@ -32,6 +33,7 @@ async def process_message(message, orchestration_service, cosmos_db_service):
         if existing and existing.get("status") in ["completed", "processing", "failed"]:
             logger.warning(f"[{paper_id}] Already {existing['status']} — skipping duplicate message")
             await message.complete()
+            message_completed = True
             return
 
         # Update status to "processing"
@@ -67,11 +69,12 @@ async def process_message(message, orchestration_service, cosmos_db_service):
         # Do NOT re-raise — we handle the error here and complete the message below
     finally:
         # Always complete the message to remove it from the queue
-        try:
-            await message.complete()
-            logger.info(f"[{paper_id}] Message completed and removed from queue")
-        except Exception as complete_err:
-            logger.error(f"[{paper_id}] Failed to complete message: {complete_err}")
+        if not message_completed:
+            try:
+                await message.complete()
+                logger.info(f"[{paper_id}] Message completed and removed from queue")
+            except Exception as complete_err:
+                logger.error(f"[{paper_id}] Failed to complete message: {complete_err}")
 
 
 async def run_worker():
