@@ -65,16 +65,13 @@ Return only valid JSON."""
             response_text = message.content[0].text
             return self._parse_json_response(response_text)
             
-        except Exception as e:
-            raise Exception(f"TopicAnalyzerAgent execution failed: {str(e)}")
-    
-    async def _execute_openai(
-        self,
-        topic: str,
-        num_questions: int,
-        preferences: Optional[str] = None
-    ) -> dict:
-        """Execute using OpenAI GPT"""
+            completion = await client.completions.create(
+                prompt=prompt,
+                model=self.model,
+                max_tokens=1024
+            )
+            response_text = completion.completion
+            return self._parse_json_response(response_text)
         try:
             from openai import AsyncOpenAI
             
